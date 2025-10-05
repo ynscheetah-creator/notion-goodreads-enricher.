@@ -1,16 +1,13 @@
+# .github/workflows/backfill_covers.yml
 name: Backfill covers (one-off)
-
-on:
-  workflow_dispatch:
-
+on: { workflow_dispatch: {} }
 jobs:
   backfill:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        with: { python-version: '3.11' }
       - name: Install deps
         run: |
           python -m venv .venv
@@ -22,7 +19,7 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           USER_AGENT: ${{ secrets.USER_AGENT }}
-          OVERWRITE: "false"
+          OVERWRITE: "false"   # kapağı olanları değiştirmek istersen "true" yap
         run: |
           source .venv/bin/activate
           python backfill_covers.py
