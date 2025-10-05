@@ -1,32 +1,56 @@
-# goodreads.py
-import re
+# googlebooks.py
 import requests
-from typing import Optional
+from typing import Dict, Optional
 
-def cover_from_goodreads(url_or_id: Optional[str], user_agent: Optional[str] = None) -> Optional[str]:
+def fetch_google_books(query: str, ua: Optional[str] = None) -> Dict:
     """
-    Verilen Goodreads kitap linkinden (veya Book Id'den) sayfanın <meta property="og:image"> değerini döndürür.
+    Title/Author veya ISBN13 ile Google Books'tan tek sonuç döndürür.
     """
-    if not url_or_id:
-        return None
+    if not query:
+        return {}
+    headers = {"User-Agent": ua or "Mozilla/5.0"}
+    r = requests.get(
+        "https://www.googleapis.com/books/v1/volumes",
+        params={"q": query},
+        headers=headers,
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return {}
+    j = r.json()
+    items = j.get("items") or []
+    if not items:
+        return {}
+    v = items[0].get("volumeInfo", {})
 
-    # Book Id mi, URL mi?
-    if url_or_id.isdigit():
-        url = f"https://www.goodreads.com/book/show/{url_or_id}"
-    else:
-        url = url_or_id
+    # ISBN13
+    isbn13 = None
+    for ident in v.get("industryIdentifiers", []) or []:
+        if ident.get("type") == "ISBN_13":
+            isbn13 = ident.get("identifier")
+            break
 
-    try:
-        headers = {"User-Agent": user_agent or "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
-        if r.status_code != 200 or not r.text:
-            return None
+    # Yıl
+    year = None
+    if isinstance(v.get("publishedDate"), str) and v["publishedDate"][:4].isdigit():
+        year = int(v["publishedDate"][:4])
 
-        # og:image meta etiketini yakala
-        m = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', r.text, flags=re.I)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
+    # Kapak
+    cover = None
+    if isinstance(v.get("imageLinks"), dict):
+        cover = v["imageLinks"].get("thumbnail") or v["imageLinks"].get("smallThumbnail")
 
-    return None
+    lang = (v.get("language") or "").upper() if v.get("language") else None
+
+    return {
+        "Title": v.get("title"),
+        "Author": ", ".join(v.get("authors", [])) if v.get("authors") else None,
+        "Publisher": v.get("publisher"),
+        "Year Published": year,
+        "Number of Pages": v.get("pageCount"),
+        "coverURL": cover,
+        "Language": lang,
+        "Description": v.get("description"),
+        "ISBN13": isbn13,
+        "source": "googlebooks",
+    }
