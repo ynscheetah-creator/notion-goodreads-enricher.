@@ -41,7 +41,7 @@ def run_once():
         if not gb:
             print(f"WARN: No GB result for {pid} (query='{query}')"); continue
 
-        # 'Cover URL' kolon adı olan setupları da destekle
+        # 'Cover URL' adıyla çalışan setuplar için aynalama
         gb["Cover URL"] = gb.get("coverURL")
 
         update_page(pid, gb)
