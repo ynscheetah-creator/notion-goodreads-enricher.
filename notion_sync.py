@@ -44,7 +44,7 @@ def _is_empty(prop: Dict[str, Any]) -> bool:
     if "select" in prop:     return prop.get("select") is None
     return True
 
-# Notion'da desteklediğimiz kolonlar (sıra yalnızca yazım önceliği)
+# Yazım önceliği
 ORDER = [
     "Title","Author","Additional Authors","Publisher","Language","Description",
     "Number of Pages","Year Published","Original Publication Year",
@@ -65,34 +65,59 @@ def build_updates(schema: Dict[str, Any], data: Dict[str, Any], current: Dict[st
         updates["LastSynced"] = {"date": {"start": now_iso()}}
     return updates
 
-# ---------- DB query helpers ----------
+# ---------- dynamic "missing fields" filter ----------
+def _build_missing_filter_from_schema(schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """DB şemasına bakıp yalnızca mevcut alanlar için 'is_empty' OR filtresi döndürür."""
+    or_blocks = []
+
+    def add_if_exists(name: str, kind: str):
+        if name in schema:
+            or_blocks.append({"property": name, kind: {"is_empty": True}})
+
+    # metin/url alanları
+    add_if_exists("Title", "title")
+    add_if_exists("Author", "rich_text")
+    add_if_exists("Publisher", "rich_text")
+    add_if_exists("Description", "rich_text")
+    add_if_exists("ISBN13", "rich_text")
+    add_if_exists("ISBN", "rich_text")
+    add_if_exists("goodreadsURL", "url")
+    add_if_exists("coverURL", "url")
+    add_if_exists("Cover URL", "url")
+
+    # sayısal alanlar
+    add_if_exists("Number of Pages", "number")
+    add_if_exists("Year Published", "number")
+    add_if_exists("Original Publication Year", "number")
+    add_if_exists("Average Rating", "number")
+    add_if_exists("Book Id", "number")
+
+    # Language iki tipten biri olabilir
+    if "Language" in schema:
+        if "select" in schema["Language"]:
+            or_blocks.append({"property": "Language", "select": {"is_empty": True}})
+        elif "rich_text" in schema["Language"]:
+            or_blocks.append({"property": "Language", "rich_text": {"is_empty": True}})
+
+    return {"or": or_blocks} if or_blocks else None
+
 def query_rows_with_gr_and_missing_fields() -> Dict[str, Any]:
     """
-    goodreadsURL dolu OLAN ve hedef alanlardan en az biri boş OLAN sayfaları getirir.
+    goodreadsURL dolu olan ve (mevcut kolonlardan) en az biri boş olan sayfaları getirir.
     """
     c = client()
-    target_missing = {
-        "or": [
-            {"property": "Title", "title": {"is_empty": True}},
-            {"property": "Author", "rich_text": {"is_empty": True}},
-            {"property": "Publisher", "rich_text": {"is_empty": True}},
-            {"property": "Language", "select": {"is_empty": True}},
-            {"property": "Language", "rich_text": {"is_empty": True}},
-            {"property": "Description", "rich_text": {"is_empty": True}},
-            {"property": "Number of Pages", "number": {"is_empty": True}},
-            {"property": "Year Published", "number": {"is_empty": True}},
-            {"property": "ISBN13", "rich_text": {"is_empty": True}},
-            {"property": "coverURL", "url": {"is_empty": True}},
-        ]
-    }
+    db = c.databases.retrieve(DATABASE_ID)
+    schema = db["properties"]
+
+    missing = _build_missing_filter_from_schema(schema)
+
+    base = [{"property": "goodreadsURL", "url": {"is_not_empty": True}}]
+    if missing:
+        base.append(missing)
+
     return c.databases.query(
         database_id=DATABASE_ID,
-        filter={
-            "and": [
-                {"property": "goodreadsURL", "url": {"is_not_empty": True}},
-                target_missing,
-            ]
-        },
+        filter={"and": base},
         page_size=100,
     )
 
@@ -104,7 +129,7 @@ def update_page(page_id: str, data: Dict[str, Any]):
 
     updates = build_updates(schema, data, current=schema)
 
-    # Kapak URL'ini bul (ikisine de bak)
+    # Kapak: 'Cover URL' veya 'coverURL'
     cover_url = data.get("Cover URL") or data.get("coverURL")
     cover_payload = {}
     if cover_url and (page.get("cover") is None or OVERWRITE):
