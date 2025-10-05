@@ -1,7 +1,9 @@
+# enrich_notion.py
 import os, re
 from typing import Optional
 from dotenv import load_dotenv
 from googlebooks import fetch_google_books
+from goodreads import cover_from_goodreads
 from notion_sync import query_rows_with_gr_and_missing_fields, update_page
 from utils import blocks_to_text
 
@@ -32,20 +34,28 @@ def run_once():
         author = blocks_to_text(props.get("Author", {}).get("rich_text", []))
         isbn13 = clean_isbn(blocks_to_text(props.get("ISBN13", {}).get("rich_text", [])))
 
-        # Sorgu önceliği: ISBN13 > Title+Author > Goodreads slug
+        # Sorgu önceliği (metaveri için): ISBN13 > Title+Author > Goodreads slug
         query = isbn13 or (f"{title} {author}".strip() if (title or author) else extract_slug_from_gr(gr_url))
-        if not query:
-            print(f"SKIP: {pid} (no query derivable)"); continue
 
-        gb = fetch_google_books(query, UA)
-        if not gb:
-            print(f"WARN: No GB result for {pid} (query='{query}')"); continue
+        gb = fetch_google_books(query, UA) if query else {}
 
-        # 'Cover URL' adıyla çalışan setuplar için aynalama
-        gb["Cover URL"] = gb.get("coverURL")
+        # --- KAPAK: Goodreads her zaman 1. öncelik ---
+        # varsa Book Id, yoksa directly URL kullan
+        book_id = None
+        if "Book Id" in props and props["Book Id"].get("number") is not None:
+            book_id = str(int(props["Book Id"]["number"]))
 
-        update_page(pid, gb)
-        print(f"Updated: {pid} ← GoogleBooks : {gb.get('Title')}")
+        cover_gr = cover_from_goodreads(book_id or gr_url, UA)
+        cover_final = cover_gr or gb.get("coverURL")  # Goodreads yoksa Google Books yedeği
+
+        # Notion'a yazılacak data
+        data = dict(gb) if gb else {}
+        if cover_final:
+            data["coverURL"] = cover_final
+            data["Cover URL"] = cover_final  # kolon adı “Cover URL” ise de dolsun
+
+        update_page(pid, data)
+        print(f"Updated: {pid} ← Title: {data.get('Title')} | Cover: {'GR' if cover_gr else 'GB'}")
 
 if __name__ == "__main__":
     run_once()
